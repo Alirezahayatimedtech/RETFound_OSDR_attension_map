@@ -301,6 +301,33 @@ def main(args, criterion):
         model.load_state_dict(checkpoint['model'])
 
     model.to(device)
+        # ---------------------------------------------
+    # Freeze/unfreeze logic goes here:
+    # ---------------------------------------------
+
+    # 1) Freeze everything
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # 2) Unfreeze the classification head
+    for param in model.head.parameters():
+        param.requires_grad = True
+
+    # 3) Unfreeze the last few transformer blocks (e.g., last 4)
+    for param in model.blocks[-4].parameters():
+        param.requires_grad = True
+
+    # ✅ Optional: Debug which parameters are trainable
+    print("\nTrainable parameters:")
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"✅ {name}")
+    print("--------------------------------------------------")
+
+
+
+
+    
     model_without_ddp = model
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
