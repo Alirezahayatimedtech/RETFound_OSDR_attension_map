@@ -314,7 +314,7 @@ def main(args, criterion):
         param.requires_grad = True
 
     # 3) Unfreeze the last few transformer blocks (e.g., last 4)
-    for param in model.blocks[-4:].parameters():
+    for param in model.blocks[-10:].parameters():
         param.requires_grad = True
 
     # ✅ Optional: Debug which parameters are trainable
