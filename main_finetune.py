@@ -148,7 +148,6 @@ def get_args_parser():
 
     return parser
 
-
 def visualize_attention(model, data_loader, device, args, output_dir):
     model.eval()
     transform = transforms.Compose([
@@ -211,7 +210,6 @@ def visualize_attention(model, data_loader, device, args, output_dir):
             plt.close()
 
             print(f"Saved attention map for image {paths[i]} at {output_path}")
-
 
 def main(args, criterion):
     if args.resume and not args.eval and not args.visualize:
@@ -336,6 +334,12 @@ def main(args, criterion):
 
         print(f'len of train_set: {len(data_loader_train) * args.batch_size}')
 
+        # Debug the first batch
+        for batch in data_loader_train:
+            samples, targets = batch
+            print(f"First batch - Samples shape: {samples.shape}, Targets shape: {targets.shape}, Targets: {targets}")
+            break
+
         data_loader_val = torch.utils.data.DataLoader(
             dataset_val, sampler=sampler_val,
             batch_size=args.batch_size,
@@ -369,6 +373,7 @@ def main(args, criterion):
     model.to(device)
     model_without_ddp = model
 
+    # Define n_parameters here, before any conditional blocks
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of model params (M): %.2f' % (n_parameters / 1.e6))
 
@@ -463,7 +468,6 @@ def main(args, criterion):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
-
 
 if __name__ == '__main__':
     args = get_args_parser()
