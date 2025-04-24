@@ -49,9 +49,11 @@ def train_one_epoch(
         
         with torch.cuda.amp.autocast():
             outputs = model(samples)
-            print(f"Outputs shape: {outputs.shape}, Targets shape: {targets.shape}, Targets: {targets}")
+            print(f"Batch {data_iter_step} - Outputs shape: {outputs.shape}, Targets shape: {targets.shape}, Targets: {targets}")
+            # If targets is one-hot encoded, convert to class indices
             if len(targets.shape) > 1 and targets.shape[1] == args.nb_classes:
                 targets = torch.argmax(targets, dim=1)
+                print(f"Batch {data_iter_step} - Converted Targets shape: {targets.shape}, Targets: {targets}")
             loss = criterion(outputs, targets)
         loss_value = loss.item()
         loss /= accum_iter
