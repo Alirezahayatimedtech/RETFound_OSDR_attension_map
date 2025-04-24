@@ -1,4 +1,3 @@
-%%writefile "/content/drive/My Drive/Colab Notebooks/RETFound_MAE/util/datasets.py"
 import os
 from torchvision import datasets, transforms
 from timm.data import create_transform
