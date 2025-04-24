@@ -1,3 +1,4 @@
+%%writefile "/content/drive/My Drive/Colab Notebooks/RETFound_MAE/util/datasets.py"
 import os
 from torchvision import datasets, transforms
 from timm.data import create_transform
@@ -15,8 +16,12 @@ class ImageFolderWithPaths(datasets.ImageFolder):
 def build_dataset(is_train, args):
     transform = build_transform(is_train, args)
     root = os.path.join(args.data_path, 'train' if is_train == 'train' else 'val' if is_train == 'val' else 'test')
-    # Use the custom ImageFolderWithPaths for visualization mode
-    dataset = ImageFolderWithPaths(root, transform=transform)
+    # Use ImageFolderWithPaths for visualization mode, otherwise use regular ImageFolder
+    if args.visualize:
+        dataset = ImageFolderWithPaths(root, transform=transform)
+    else:
+        dataset = datasets.ImageFolder(root, transform=transform)
+    
     print(f"Dataset for {is_train}: {root}")
     print("Classes:", dataset.classes)
     print("Class to index mapping:", dataset.class_to_idx)
@@ -24,8 +29,13 @@ def build_dataset(is_train, args):
 
     # Debug the first few samples
     for i in range(min(5, len(dataset))):
-        sample, target, path = dataset[i]
-        print(f"Sample {i} - Image shape: {sample.shape}, Target: {target}, Path: {path}")
+        sample = dataset[i]
+        if args.visualize:
+            image, target, path = sample
+            print(f"Sample {i} - Image shape: {image.shape}, Target: {target}, Path: {path}")
+        else:
+            image, target = sample
+            print(f"Sample {i} - Image shape: {image.shape}, Target: {target}")
 
     return dataset
 
