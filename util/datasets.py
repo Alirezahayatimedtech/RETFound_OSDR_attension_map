@@ -11,8 +11,17 @@ from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
 def build_dataset(is_train, args):
     transform = build_transform(is_train, args)
-    root = os.path.join(args.data_path, is_train)
+    root = os.path.join(args.data_path, 'train' if is_train == 'train' else 'val' if is_train == 'val' else 'test')
     dataset = datasets.ImageFolder(root, transform=transform)
+    print(f"Dataset for {is_train}: {root}")
+    print("Classes:", dataset.classes)
+    print("Class to index mapping:", dataset.class_to_idx)
+    print("Number of samples:", len(dataset))
+
+    # Debug the first few samples
+    for i in range(min(5, len(dataset))):
+        sample, target = dataset[i]
+        print(f"Sample {i} - Image shape: {sample.shape}, Target: {target}")
 
     return dataset
 
