@@ -49,6 +49,9 @@ def train_one_epoch(
         
         with torch.cuda.amp.autocast():
             outputs = model(samples)
+            print(f"Outputs shape: {outputs.shape}, Targets shape: {targets.shape}, Targets: {targets}")
+            if len(targets.shape) > 1 and targets.shape[1] == args.nb_classes:
+                targets = torch.argmax(targets, dim=1)
             loss = criterion(outputs, targets)
         loss_value = loss.item()
         loss /= accum_iter
