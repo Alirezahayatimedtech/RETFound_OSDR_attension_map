@@ -1,7 +1,6 @@
 import argparse
 import datetime
 import json
-
 import numpy as np
 import os
 import time
@@ -24,10 +23,12 @@ from engine_finetune import train_one_epoch, evaluate
 
 import warnings
 import faulthandler
+import matplotlib.pyplot as plt
+from PIL import Image
+import torchvision.transforms as transforms
 
 faulthandler.enable()
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE fine-tuning for image classification', add_help=False)
@@ -121,6 +122,8 @@ def get_args_parser():
                         help='start epoch')
     parser.add_argument('--eval', action='store_true',
                         help='Perform evaluation only')
+    parser.add_argument('--visualize', action='store_true',
+                        help='Perform attention visualization')
     parser.add_argument('--dist_eval', action='store_true', default=False,
                         help='Enabling distributed evaluation (recommended during training for faster monitor')
     parser.add_argument('--num_workers', default=10, type=int)
@@ -146,8 +149,72 @@ def get_args_parser():
     return parser
 
 
+def visualize_attention(model, data_loader, device, args, output_dir):
+    model.eval()
+    transform = transforms.Compose([
+        transforms.Resize((args.input_size, args.input_size)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    for batch_idx, (images, targets, paths) in enumerate(data_loader):
+        images = images.to(device, non_blocking=True)
+
+        with torch.no_grad():
+            _, attn_weights = model(images, return_attention=True)
+
+        # Process attention weights
+        # Shape: [batch_size, num_heads, num_tokens, num_tokens]
+        # Focus on CLS token's attention to patches (excluding CLS token itself)
+        cls_attn = attn_weights[:, :, 0, 1:]  # [batch_size, num_heads, num_patches]
+        cls_attn = cls_attn.mean(dim=1)  # Average across heads: [batch_size, num_patches]
+
+        # Number of patches for a 224x224 image with 16x16 patches
+        num_patches = (args.input_size // 16) ** 2
+        patch_grid_size = int(np.sqrt(num_patches))  # e.g., 14 for 224x224 image
+
+        for i in range(images.size(0)):
+            # Reshape attention to patch grid
+            attn_map = cls_attn[i].view(patch_grid_size, patch_grid_size).cpu().numpy()
+
+            # Upsample to image size
+            attn_map = Image.fromarray(attn_map)
+            attn_map = attn_map.resize((args.input_size, args.input_size), Image.BILINEAR)
+            attn_map = np.array(attn_map)
+
+            # Normalize for visualization
+            attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min() + 1e-8)
+
+            # Load original image for overlay
+            original_image = Image.open(paths[i]).convert('RGB')
+            original_image = original_image.resize((args.input_size, args.input_size))
+
+            # Plot original image and heatmap
+            plt.figure(figsize=(10, 5))
+            
+            plt.subplot(1, 2, 1)
+            plt.imshow(original_image)
+            plt.title('Original OCT Image')
+            plt.axis('off')
+            
+            plt.subplot(1, 2, 2)
+            plt.imshow(original_image)
+            plt.imshow(attn_map, cmap='jet', alpha=0.5)
+            plt.title('Attention Heatmap')
+            plt.axis('off')
+            
+            plt.tight_layout()
+            output_path = os.path.join(output_dir, f'attention_map_{batch_idx}_{i}.png')
+            plt.savefig(output_path)
+            plt.close()
+
+            print(f"Saved attention map for image {paths[i]} at {output_path}")
+
+
 def main(args, criterion):
-    if args.resume and not args.eval:
+    if args.resume and not args.eval and not args.visualize:
         resume = args.resume
         checkpoint = torch.load(args.resume, map_location='cpu')
         print("Load checkpoint from: %s" % args.resume)
@@ -170,11 +237,11 @@ def main(args, criterion):
 
     if args.model=='RETFound_mae':
         model = models.__dict__[args.model](
-        img_size=args.input_size,
-        num_classes=args.nb_classes,
-        drop_path_rate=args.drop_path,
-        global_pool=args.global_pool,
-    )
+            img_size=args.input_size,
+            num_classes=args.nb_classes,
+            drop_path_rate=args.drop_path,
+            global_pool=args.global_pool,
+        )
     else:
         model = models.__dict__[args.model](
             num_classes=args.nb_classes,
@@ -182,7 +249,7 @@ def main(args, criterion):
             args=args,
         )
     
-    if args.finetune and not args.eval:
+    if args.finetune and (not args.eval and not args.visualize):
         
         print(f"Downloading pre-trained weights from: {args.finetune}")
         
@@ -221,11 +288,10 @@ def main(args, criterion):
     dataset_val = build_dataset(is_train='val', args=args)
     dataset_test = build_dataset(is_train='test', args=args)
 
-
     if True:  # args.distributed:
         num_tasks = misc.get_world_size()
         global_rank = misc.get_rank()
-        if not args.eval:
+        if not (args.eval or args.visualize):
             sampler_train = torch.utils.data.DistributedSampler(
                 dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
             )
@@ -253,13 +319,13 @@ def main(args, criterion):
         else:
             sampler_test = torch.utils.data.SequentialSampler(dataset_test)
 
-    if global_rank == 0 and args.log_dir is not None and not args.eval:
+    if global_rank == 0 and args.log_dir is not None and not (args.eval or args.visualize):
         os.makedirs(args.log_dir, exist_ok=True)
         log_writer = SummaryWriter(log_dir=os.path.join(args.log_dir, args.task))
     else:
         log_writer = None
 
-    if not args.eval:
+    if not (args.eval or args.visualize):
         data_loader_train = torch.utils.data.DataLoader(
             dataset_train, sampler=sampler_train,
             batch_size=args.batch_size,
@@ -295,43 +361,22 @@ def main(args, criterion):
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
 
-    if args.resume and args.eval:
+    if (args.resume and args.eval) or (args.resume and args.visualize):
         checkpoint = torch.load(args.resume, map_location='cpu')
         print("Load checkpoint from: %s" % args.resume)
         model.load_state_dict(checkpoint['model'])
 
     model.to(device)
-        # ---------------------------------------------
-    # Freeze/unfreeze logic goes here:
-    # ---------------------------------------------
-
-    # 1) Freeze everything
-    for param in model.parameters():
-        param.requires_grad = False
-
-    # 2) Unfreeze the classification head
-    for param in model.head.parameters():
-        param.requires_grad = True
-
-    # 3) Unfreeze the last few transformer blocks (e.g., last 4)
-    for param in model.blocks[-4:].parameters():
-        param.requires_grad = True
-
-    # ✅ Optional: Debug which parameters are trainable
-    print("\nTrainable parameters:")
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(f"✅ {name}")
-    print("--------------------------------------------------")
-
-
-
-
-    
     model_without_ddp = model
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of model params (M): %.2f' % (n_parameters / 1.e6))
+
+    if args.visualize:
+        # Create a directory for saving attention maps
+        attention_output_dir = os.path.join(args.output_dir, 'attention_maps')
+        visualize_attention(model, data_loader_test, device, args, attention_output_dir)
+        exit(0)
 
     eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
 
@@ -394,7 +439,6 @@ def main(args, criterion):
                     loss_scaler=loss_scaler, epoch=epoch, mode='best')
         print("Best epoch = %d, Best score = %.4f" % (best_epoch, max_score))
 
-
         if epoch == (args.epochs - 1):
             checkpoint = torch.load(os.path.join(args.output_dir, args.task, 'checkpoint-best.pth'), map_location='cpu')
             model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
@@ -430,5 +474,3 @@ if __name__ == '__main__':
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args, criterion)
-
-
