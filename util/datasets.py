@@ -1,18 +1,22 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-# Partly revised by YZ @UCL&Moorfields
-# --------------------------------------------------------
-
 import os
 from torchvision import datasets, transforms
 from timm.data import create_transform
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
+# Custom ImageFolder class to return (image, target, path)
+class ImageFolderWithPaths(datasets.ImageFolder):
+    def __getitem__(self, index):
+        # Get the original (image, target) from ImageFolder
+        image, target = super().__getitem__(index)
+        # Get the file path for this index
+        path = self.imgs[index][0]
+        return image, target, path
 
 def build_dataset(is_train, args):
     transform = build_transform(is_train, args)
     root = os.path.join(args.data_path, 'train' if is_train == 'train' else 'val' if is_train == 'val' else 'test')
-    dataset = datasets.ImageFolder(root, transform=transform)
+    # Use the custom ImageFolderWithPaths for visualization mode
+    dataset = ImageFolderWithPaths(root, transform=transform)
     print(f"Dataset for {is_train}: {root}")
     print("Classes:", dataset.classes)
     print("Class to index mapping:", dataset.class_to_idx)
@@ -20,11 +24,10 @@ def build_dataset(is_train, args):
 
     # Debug the first few samples
     for i in range(min(5, len(dataset))):
-        sample, target = dataset[i]
-        print(f"Sample {i} - Image shape: {sample.shape}, Target: {target}")
+        sample, target, path = dataset[i]
+        print(f"Sample {i} - Image shape: {sample.shape}, Target: {target}, Path: {path}")
 
     return dataset
-
 
 def build_transform(is_train, args):
     mean = IMAGENET_DEFAULT_MEAN
