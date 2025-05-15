@@ -337,7 +337,7 @@ def main(args, criterion):
         # Debug the first batch
         for batch in data_loader_train:
             samples, targets = batch
-            print(f"First batch - Samples shape: {samples.shape}, Targets shape: {targets.shape}, Targets: {targets}")
+            #print(f"First batch - Samples shape: {samples.shape}, Targets shape: {targets.shape}, Targets: {targets}")
             break
 
         data_loader_val = torch.utils.data.DataLoader(
