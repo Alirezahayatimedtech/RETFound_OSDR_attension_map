@@ -148,12 +148,14 @@ def get_args_parser():
 
     return parser
 
+
 def visualize_attention(model, data_loader, device, args, output_dir):
     model.eval()
     transform = transforms.Compose([
         transforms.Resize((args.input_size, args.input_size)),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225])
     ])
 
     os.makedirs(output_dir, exist_ok=True)
@@ -164,52 +166,59 @@ def visualize_attention(model, data_loader, device, args, output_dir):
         with torch.no_grad():
             _, attn_weights = model(images, return_attention=True)
 
-        # Process attention weights
-        # Shape: [batch_size, num_heads, num_tokens, num_tokens]
-        # Focus on CLS token's attention to patches (excluding CLS token itself)
-        cls_attn = attn_weights[:, :, 0, 1:]  # [batch_size, num_heads, num_patches]
-        cls_attn = cls_attn.mean(dim=1)  # Average across heads: [batch_size, num_patches]
-
-        # Number of patches for a 224x224 image with 16x16 patches
+        # CLS token -> patch attention
+        cls_attn = attn_weights[:, :, 0, 1:]      # [B, heads, patches]
+        cls_attn = cls_attn.mean(dim=1)           # [B, patches]
         num_patches = (args.input_size // 16) ** 2
-        patch_grid_size = int(np.sqrt(num_patches))  # e.g., 14 for 224x224 image
+        grid_size   = int(np.sqrt(num_patches))
 
         for i in range(images.size(0)):
-            # Reshape attention to patch grid
-            attn_map = cls_attn[i].view(patch_grid_size, patch_grid_size).cpu().numpy()
-
-            # Upsample to image size
-            attn_map = Image.fromarray(attn_map)
-            attn_map = attn_map.resize((args.input_size, args.input_size), Image.BILINEAR)
-            attn_map = np.array(attn_map)
-
-            # Normalize for visualization
+            # reshape & upsample
+            attn_map = (cls_attn[i]
+                        .view(grid_size, grid_size)
+                        .cpu()
+                        .numpy())
+            attn_img = Image.fromarray(attn_map)
+            attn_img = attn_img.resize(
+                (args.input_size, args.input_size),
+                Image.BILINEAR
+            )
+            attn_map = np.array(attn_img)
             attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min() + 1e-8)
 
-            # Load original image for overlay
-            original_image = Image.open(paths[i]).convert('RGB')
-            original_image = original_image.resize((args.input_size, args.input_size))
+            # load & resize original
+            orig_path = paths[i]
+            original_image = Image.open(orig_path).convert('RGB')
+            original_image = original_image.resize(
+                (args.input_size, args.input_size)
+            )
 
-            # Plot original image and heatmap
-            plt.figure(figsize=(10, 5))
-            
-            plt.subplot(1, 2, 1)
+            # build output name from original stem
+            stem = Path(orig_path).stem
+            output_path = os.path.join(
+                output_dir,
+                f"{stem}_attention.png"
+            )
+
+            # plot & save
+            plt.figure(figsize=(10,5))
+            plt.subplot(1,2,1)
             plt.imshow(original_image)
             plt.title('Original OCT Image')
             plt.axis('off')
-            
-            plt.subplot(1, 2, 2)
+
+            plt.subplot(1,2,2)
             plt.imshow(original_image)
             plt.imshow(attn_map, cmap='jet', alpha=0.5)
             plt.title('Attention Heatmap')
             plt.axis('off')
-            
+
             plt.tight_layout()
-            output_path = os.path.join(output_dir, f'attention_map_{batch_idx}_{i}.png')
-            plt.savefig(output_path)
+            plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
             plt.close()
 
-            print(f"Saved attention map for image {paths[i]} at {output_path}")
+            print(f"Saved attention map for {orig_path} → {output_path}")
+
 
 def main(args, criterion):
     if args.resume and not args.eval and not args.visualize:
