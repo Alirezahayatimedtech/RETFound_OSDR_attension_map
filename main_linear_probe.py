@@ -149,16 +149,25 @@ def get_args_parser():
     parser.add_argument('--datasets_seed', default=2026, type=int)
 
     return parser
+from collections import defaultdict
+from pathlib import Path
+import matplotlib.pyplot as plt
+import numpy as np
+import cv2
 
 def visualize_attention(model, data_loader, device, args, output_dir):
     model.eval()
+    os.makedirs(output_dir, exist_ok=True)
+
     transform = transforms.Compose([
         transforms.Resize((args.input_size, args.input_size)),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std =[0.229, 0.224, 0.225])
     ])
 
-    os.makedirs(output_dir, exist_ok=True)
+    # tmp storage: sample_id → list of (orig_PIL, overlay_np, view_name)
+    samples = defaultdict(list)
 
     for batch_idx, (images, targets, paths) in enumerate(data_loader):
         images = images.to(device, non_blocking=True)
@@ -166,52 +175,61 @@ def visualize_attention(model, data_loader, device, args, output_dir):
         with torch.no_grad():
             _, attn_weights = model(images, return_attention=True)
 
-        # Process attention weights
-        # Shape: [batch_size, num_heads, num_tokens, num_tokens]
-        # Focus on CLS token's attention to patches (excluding CLS token itself)
-        cls_attn = attn_weights[:, :, 0, 1:]  # [batch_size, num_heads, num_patches]
-        cls_attn = cls_attn.mean(dim=1)  # Average across heads: [batch_size, num_patches]
-
-        # Number of patches for a 224x224 image with 16x16 patches
-        num_patches = (args.input_size // 16) ** 2
-        patch_grid_size = int(np.sqrt(num_patches))  # e.g., 14 for 224x224 image
+        # CLS‐to‐patch attention
+        cls_attn = attn_weights[:, :, 0, 1:].mean(dim=1)  # [B, num_patches]
+        grid_size = int(np.sqrt(cls_attn.shape[-1]))     # e.g. 14 for 224/16
 
         for i in range(images.size(0)):
-            # Reshape attention to patch grid
-            attn_map = cls_attn[i].view(patch_grid_size, patch_grid_size).cpu().numpy()
-
-            # Upsample to image size
+            # build attention map
+            attn_map = (
+                cls_attn[i]
+                .view(grid_size, grid_size)
+                .cpu()
+                .numpy()
+            )
             attn_map = Image.fromarray(attn_map)
-            attn_map = attn_map.resize((args.input_size, args.input_size), Image.BILINEAR)
-            attn_map = np.array(attn_map)
+            attn_map = attn_map.resize((args.input_size, args.input_size),
+                                       Image.BILINEAR)
+            attn_np  = np.array(attn_map)
+            attn_np  = (attn_np - attn_np.min()) / (attn_np.max() - attn_np.min() + 1e-8)
 
-            # Normalize for visualization
-            attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min() + 1e-8)
+            # load + resize original
+            orig_pil = Image.open(paths[i]).convert('RGB')
+            orig_pil = orig_pil.resize((args.input_size, args.input_size))
 
-            # Load original image for overlay
-            original_image = Image.open(paths[i]).convert('RGB')
-            original_image = original_image.resize((args.input_size, args.input_size))
+            # overlay (jet colormap)
+            orig_np  = np.array(orig_pil)
+            heat_rgba = plt.cm.jet(attn_np)[..., :3]  # H×W×3 floats 0–1
+            overlay_np = (orig_np * 0.5 + heat_rgba*255*0.5).astype(np.uint8)
 
-            # Plot original image and heatmap
-            plt.figure(figsize=(10, 5))
-            
-            plt.subplot(1, 2, 1)
-            plt.imshow(original_image)
-            plt.title('Original OCT Image')
-            plt.axis('off')
-            
-            plt.subplot(1, 2, 2)
-            plt.imshow(original_image)
-            plt.imshow(attn_map, cmap='jet', alpha=0.5)
-            plt.title('Attention Heatmap')
-            plt.axis('off')
-            
-            plt.tight_layout()
-            output_path = os.path.join(output_dir, f'attention_map_{batch_idx}_{i}.png')
-            plt.savefig(output_path)
-            plt.close()
+            # parse sample_id & view from stem
+            stem = Path(paths[i]).stem
+            # e.g. sampleID = leading digits, view = suffix after underscore
+            # adjust this split to your naming convention
+            parts = stem.split('_')
+            sample_id = parts[0]
+            view      = '_'.join(parts[1:]) if len(parts)>1 else 'view'
 
-            print(f"Saved attention map for image {paths[i]} at {output_path}")
+            samples[sample_id].append((orig_pil, overlay_np, view))
+
+    # now for each sample make one big figure
+    for sample_id, lst in samples.items():
+        n = len(lst)
+        fig, axes = plt.subplots(n, 2, figsize=(6, 3*n), squeeze=False)
+        for row, (orig_pil, overlay_np, view) in enumerate(lst):
+            axes[row,0].imshow(orig_pil)
+            axes[row,0].set_title(f"{sample_id} – {view}")
+            axes[row,0].axis('off')
+
+            axes[row,1].imshow(overlay_np)
+            axes[row,1].set_title("Attention")
+            axes[row,1].axis('off')
+
+        plt.tight_layout(pad=1)
+        out_path = os.path.join(output_dir, f"{sample_id}.png")
+        fig.savefig(out_path, bbox_inches='tight', pad_inches=0.1)
+        plt.close(fig)
+        print(f"Saved attention montage for sample {sample_id} → {out_path}")
 
 def main(args, criterion):
     if args.resume and not args.eval and not args.visualize:
